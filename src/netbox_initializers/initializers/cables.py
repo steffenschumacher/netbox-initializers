@@ -17,7 +17,7 @@ from dcim.models import (
 from django.contrib.contenttypes.models import ContentType
 from django.db.models import Q
 
-from . import BaseInitializer, register_initializer
+from . import BaseInitializer, register_initializer, SurvivableError, ImportNotNeeded
 
 CONSOLE_PORT_TERMINATION = ContentType.objects.get_for_model(ConsolePort)
 CONSOLE_SERVER_PORT_TERMINATION = ContentType.objects.get_for_model(ConsoleServerPort)
@@ -189,48 +189,50 @@ def check_terminations_are_free(*args):
 
 
 class CableInitializer(BaseInitializer):
-    data_file_name = "cables.yml"
 
-    def load_data(self):
-        cables = self.load_yaml()
-        if cables is None:
-            return
-        for params in cables:
-            params["termination_a_class"] = get_termination_class_by_name(
-                params.get("termination_a_class")
-            )
-            params["termination_b_class"] = get_termination_class_by_name(
-                params.get("termination_b_class")
-            )
+    def data_file_name(self) -> str:
+        return "cables.yml"
 
-            term_a = get_termination_object(params, side="a")
-            term_b = get_termination_object(params, side="b")
+    def nb_model(self) -> type:
+        return Cable
 
-            check_interface_types(term_a, term_b)
+    def name(self) -> str:
+        return "cable"
 
-            term_a_ct = ContentType.objects.get_for_model(term_a)
-            term_b_ct = ContentType.objects.get_for_model(term_b)
+    def icon(self):
+        return "🧷"
 
-            types_ok, msg = check_termination_types(term_a_ct, term_b_ct)
-            cable_name = get_cable_name((term_a, term_a_ct), (term_b, term_b_ct))
+    def pre_process_params(self, params):
+        params["termination_a_class"] = get_termination_class_by_name(
+            params.get("termination_a_class")
+        )
+        params["termination_b_class"] = get_termination_class_by_name(
+            params.get("termination_b_class")
+        )
 
-            if not types_ok:
-                print(f"⚠️ Invalid termination types for {cable_name}. {msg}")
-                continue
+        term_a = get_termination_object(params, side="a")
+        term_b = get_termination_object(params, side="b")
 
-            if cable_in_cables((term_a, term_a_ct), (term_b, term_b_ct)):
-                continue
+        check_interface_types(term_a, term_b)
 
-            check_terminations_are_free(term_a, term_b)
+        term_a_ct = ContentType.objects.get_for_model(term_a)
+        term_b_ct = ContentType.objects.get_for_model(term_b)
 
-            params["termination_a_id"] = term_a.id
-            params["termination_b_id"] = term_b.id
-            params["termination_a_type"] = term_a_ct
-            params["termination_b_type"] = term_b_ct
+        types_ok, msg = check_termination_types(term_a_ct, term_b_ct)
+        cable_name = get_cable_name((term_a, term_a_ct), (term_b, term_b_ct))
 
-            cable = Cable.objects.create(**params)
+        if not types_ok:
+            raise SurvivableError(f"⚠️ Invalid termination types for {cable_name}. {msg}")
 
-            print(f"🧷 Created cable {cable} {cable_name}")
+        if cable_in_cables((term_a, term_a_ct), (term_b, term_b_ct)):
+            raise ImportNotNeeded()
+
+        check_terminations_are_free(term_a, term_b)
+
+        params["termination_a_id"] = term_a.id
+        params["termination_b_id"] = term_b.id
+        params["termination_a_type"] = term_a_ct
+        params["termination_b_type"] = term_b_ct
 
 
 register_initializer("cables", CableInitializer)
